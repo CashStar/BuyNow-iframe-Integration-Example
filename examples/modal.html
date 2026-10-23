@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Client integration example (modal)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 24px;
+      }
+
+      .actions button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+
+      /* Full-page overlay behind the modal; also the click target that dims the rest of the page. */
+      #buynow-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 15, 20, 0.6);
+        backdrop-filter: blur(2px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        animation: buynow-backdrop-in 0.18s ease-out;
+      }
+
+      /*
+        Fixed-size modal panel. Its own background is a light gray (not white) and it has
+        padding around the iframe, so the padding reads as a frame around the widget instead
+        of the widget looking like it's glued to the modal's edges. overflow is hidden (not
+        auto) because the iframe fills the padded content area exactly - any scrolling needed
+        for taller widget content happens inside the iframe itself (see #buynow-frame), not in
+        this wrapper.
+      */
+      #buynow-modal {
+        width: 520px;
+        max-width: 92vw;
+        height: 680px;
+        max-height: 88vh;
+        background: #f1f2f4;
+        border-radius: 16px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+        padding: 20px;
+        box-sizing: border-box;
+        overflow: hidden;
+        animation: buynow-modal-in 0.2s ease-out;
+      }
+
+      #buynow-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+      }
+
+      @keyframes buynow-backdrop-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes buynow-modal-in {
+        from {
+          opacity: 0;
+          transform: scale(0.96);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Client site</h1>
+
+    <div class="actions">
+      <button id="load-buynow" type="button">Buy Now</button>
+    </div>
+
+    <!--
+      No separate close control here on purpose - the widget forwards its own onClose event
+      (see the message listener below), which is what closes this modal.
+    -->
+
+    <script>
+      /*
+        parentOrigin must match this page's own origin exactly (scheme + host + port).
+        The widget page uses it to restrict which window it will postMessage to/accept
+        messages from. Set to http://127.0.0.1:5501 for local testing - use the real
+        client domain (e.g. https://client-one.example.com) in production.
+      */
+      var WIDGET_ORIGIN = "http://localhost:8080";
+      var WIDGET_URL =
+        WIDGET_ORIGIN +
+        "/index.html?parentOrigin=" +
+        encodeURIComponent(window.location.origin) +
+        "&orderingToken=qc70vv3ye653o3j3elk7o1x6fq4r7yvuay0a6met&instanceId=modal5678";
+
+      var loadBtn = document.getElementById("load-buynow");
+      var backdrop = null;
+      var frame = null;
+
+      function openModal() {
+        if (backdrop) return;
+
+        backdrop = document.createElement("div");
+        backdrop.id = "buynow-backdrop";
+        backdrop.setAttribute("role", "dialog");
+        backdrop.setAttribute("aria-modal", "true");
+        backdrop.setAttribute("aria-label", "Buy Now");
+
+        var modal = document.createElement("div");
+        modal.id = "buynow-modal";
+
+        frame = document.createElement("iframe");
+        frame.id = "buynow-frame";
+        frame.title = "Buy Now";
+        frame.src = WIDGET_URL;
+
+        modal.appendChild(frame);
+        backdrop.appendChild(modal);
+        document.body.appendChild(backdrop);
+
+        // Standard modal behavior: stop the page behind it from scrolling while it's open.
+        document.body.style.overflow = "hidden";
+        loadBtn.disabled = true;
+      }
+
+      function closeModal() {
+        if (!backdrop) return;
+        backdrop.remove();
+        backdrop = null;
+        frame = null;
+        document.body.style.overflow = "";
+        loadBtn.disabled = false;
+      }
+
+      loadBtn.addEventListener("click", openModal);
+
+      window.addEventListener("message", function (event) {
+        if (event.origin !== WIDGET_ORIGIN) return;
+        if (!frame || event.source !== frame.contentWindow) return;
+        var data = event.data;
+        if (!data || data.source !== "buynow-widget") return;
+
+        switch (data.type) {
+          case "resize":
+            // Ignored on purpose: the modal is a fixed-size viewport, and the widget's own
+            // document scrolls internally (native scrollbar) instead of the iframe growing to
+            // the content's full height. See inline.html for more detail on why.
+            break;
+          case "onSuccess":
+            console.log("Purchase complete", data.payload);
+            break;
+          case "onError":
+            console.error("Widget error", data.payload);
+            break;
+          case "onClose":
+            console.log("Widget closed");
+            closeModal();
+            break;
+        }
+      });
+    </script>
+  </body>
+</html>

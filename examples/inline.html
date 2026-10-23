@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Client integration example (inline)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 24px;
+      }
+
+      .actions {
+        margin-bottom: 16px;
+      }
+
+      .actions button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+
+      /*
+        Fixed-size area that hosts the widget; the border marks its boundary. overflow is
+        hidden (not auto) because the iframe fills this box exactly - any scrolling needed
+        for taller widget content happens inside the iframe itself (see #buynow-frame),
+        not in this wrapper.
+      */
+      #buynow-container {
+        width: 480px;
+        height: 640px;
+        border: 3px dashed #e91e63;
+        border-radius: 8px;
+        background: #fff8fb;
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+
+      #buynow-container .placeholder {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #e91e63;
+        text-align: center;
+        padding: 16px;
+      }
+
+      #buynow-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+      }
+
+      /* We're embedded inline, not in a modal overlay - the widget's own close (X) button is redundant */
+      /* #buynow-widget-container button[aria-label="close" i] {
+        display: none !important;
+      } */
+    </style>
+  </head>
+  <body>
+    <h1>Client site</h1>
+
+    <div class="actions">
+      <button id="load-buynow" type="button">Buy Now</button>
+      <button id="close-buynow" type="button" hidden>Close</button>
+    </div>
+
+    <div id="buynow-container">
+      <div class="placeholder">Click "Buy Now" to load the widget here.</div>
+    </div>
+
+    <script>
+      /*
+        parentOrigin must match this page's own origin exactly (scheme + host + port).
+        The widget page uses it to restrict which window it will postMessage to/accept
+        messages from. Set to http://127.0.0.1:5501 for local testing - use the real
+        client domain (e.g. https://client-one.example.com) in production.
+      */
+      var WIDGET_ORIGIN = "http://localhost:8080";
+      var WIDGET_URL =
+        WIDGET_ORIGIN +
+        "/index.html?parentOrigin=" +
+        encodeURIComponent(window.location.origin) +
+        "&orderingToken=qc70vv3ye653o3j3elk7o1x6fq4r7yvuay0a6met&instanceId=home1234";
+
+      var container = document.getElementById("buynow-container");
+      var loadBtn = document.getElementById("load-buynow");
+      var closeBtn = document.getElementById("close-buynow");
+      var placeholderHtml = container.innerHTML;
+      var frame = null;
+
+      function loadWidget() {
+        if (frame) return;
+        frame = document.createElement("iframe");
+        frame.id = "buynow-frame";
+        frame.title = "Buy Now";
+        frame.src = WIDGET_URL;
+        container.innerHTML = "";
+        container.appendChild(frame);
+        loadBtn.disabled = true;
+        closeBtn.hidden = false;
+      }
+
+      function closeWidget() {
+        if (!frame) return;
+        frame = null;
+        container.innerHTML = placeholderHtml;
+        loadBtn.disabled = false;
+        closeBtn.hidden = true;
+      }
+
+      loadBtn.addEventListener("click", loadWidget);
+      closeBtn.addEventListener("click", closeWidget);
+
+      window.addEventListener("message", function (event) {
+        if (event.origin !== WIDGET_ORIGIN) return;
+        if (!frame || event.source !== frame.contentWindow) return;
+        var data = event.data;
+        if (!data || data.source !== "buynow-widget") return;
+
+        switch (data.type) {
+          case "resize":
+            break;
+          case "onSuccess":
+            console.log("Purchase complete", data.payload);
+            break;
+          case "onError":
+            console.error("Widget error", data.payload);
+            break;
+          case "onClose":
+            console.log("Widget closed");
+            closeWidget();
+            break;
+        }
+      });
+    </script>
+  </body>
+</html>

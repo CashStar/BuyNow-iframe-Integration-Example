@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://content.blackhawknetwork.com/bingewidgetv2/2.0.0-137/widget.js"></script>
+    <title>BuyNow Widget Embed</title>
+    <style>
+      /* No chrome of our own - only the widget should be visible inside the client's iframe */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow-x: hidden;
+      }
+      #buynow-widget-container {
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="buynow-widget-container"></div>
+    <!-- Never shown to the user - clicked programmatically to open the widget since hideTriggerButton removes the default button -->
+    <button id="buynow-auto-trigger" type="button" style="display: none" aria-hidden="true" tabindex="-1"></button>
+
+    <script>
+      (function () {
+        var CONTAINER_ID = "buynow-widget-container";
+        var TRIGGER_ID = "buynow-auto-trigger";
+        var params = new URLSearchParams(window.location.search);
+
+        // The client's page can pass its own origin explicitly; falls back to document.referrer
+        // (set automatically by the browser when this page is loaded inside their iframe).
+        var parentOrigin =
+          params.get("parentOrigin") ||
+          (document.referrer ? new URL(document.referrer).origin : null);
+
+        if (!parentOrigin) {
+          console.warn(
+            "[buynow-widget] Unable to determine parent origin. Auto-resize and event messages to the host page will be disabled. Pass ?parentOrigin=https://client-site.com to enable them."
+          );
+        }
+
+        var defaultConfig = {
+          orderingToken: "qc70vv3ye653o3j3elk7o1x6fq4r7yvuay0a6met",
+          brandCode: "LITEAMFINAL",
+          brandName: "LITEAMFINAL",
+          minPrice: 25,
+          midPrice: 100,
+          maxPrice: 200,
+          faceplates: [
+            {
+              url: "https://fpstatic.cashstar.com/faceplates/DBA3RG8CQ/MASTER-1.jpeg",
+              code: "DBA3RG8CQ",
+              alt: "A blue image"
+            }
+          ],
+          maxAmountAllowed: 1000,
+          environment: "pre-prod",
+          features: {
+            isPhysical: false,
+            showApplyPromoBox: false,
+            isSentryEnabled: true,
+            isHotjarEnabled: true,
+            confirmationEmailRequired: false,
+            enableMultiQuantityPurchase: true,
+            enablePhysicalDigitalSwitch: false,
+            hideCustomInput: false,
+            embedId: CONTAINER_ID
+          },
+          imgAlt: "A blue image",
+          termsAndConditionsLink:
+            "https://liteamfinal.semi.cashstar.com/self_service/v2/about/terms_and_conditions",
+          privacyPoliciesLink:
+            "https://liteamfinal.semi.cashstar.com/store/self_service/v2/about/privacy_policy?locale=en-us",
+          contactUsEmail: "liteamfinal@bhn.com",
+          hideTriggerButton: true,
+          triggerBy: "#" + TRIGGER_ID
+        };
+
+        // Quick per-client overrides via plain query params, e.g. ?brandCode=XYZ&orderingToken=abc
+        var SIMPLE_KEYS = [
+          "orderingToken",
+          "brandCode",
+          "brandName",
+          "environment",
+          "contactUsEmail",
+          "termsAndConditionsLink",
+          "privacyPoliciesLink"
+        ];
+        var NUMERIC_KEYS = ["minPrice", "midPrice", "maxPrice", "maxAmountAllowed"];
+
+        function applySimpleOverrides(config) {
+          SIMPLE_KEYS.concat(NUMERIC_KEYS).forEach(function (key) {
+            if (!params.has(key)) return;
+            var value = params.get(key);
+            config[key] = NUMERIC_KEYS.indexOf(key) !== -1 ? Number(value) : value;
+          });
+          return config;
+        }
+
+        // Full override for nested fields (faceplates, features, translations, ...) via a single
+        // base64-encoded JSON blob, e.g. ?config=<base64(JSON.stringify(partialConfig))>
+        function applyFullOverride(config) {
+          var encoded = params.get("config");
+          if (!encoded) return config;
+          try {
+            var parsed = JSON.parse(decodeURIComponent(atob(encoded)));
+            return Object.assign({}, config, parsed, {
+              features: Object.assign({}, config.features, parsed.features)
+            });
+          } catch (err) {
+            console.error("[buynow-widget] Invalid ?config param, ignoring it.", err);
+            return config;
+          }
+        }
+
+        function postToParent(type, payload) {
+          if (!parentOrigin || window.parent === window) return;
+          window.parent.postMessage(
+            { source: "buynow-widget", type: type, payload: payload },
+            parentOrigin
+          );
+        }
+
+        function notifyResize() {
+          postToParent("resize", { height: document.documentElement.scrollHeight });
+        }
+
+        function wireEventForwarding(config) {
+          [
+            "onOpen",
+            "onClose",
+            "onSuccess",
+            "onError",
+            "onLocaleChange",
+            "onPaymentsInit",
+            "onPaymentMethodChange",
+            "onSubmitButtonClick"
+          ].forEach(function (eventName) {
+            config[eventName] = function (data) {
+              postToParent(eventName, data);
+            };
+          });
+          return config;
+        }
+
+        
+        function autoOpenOnReady(config) {
+          var trigger = document.getElementById(TRIGGER_ID);
+          var container = document.getElementById(CONTAINER_ID);
+          if (!trigger || !container) return;
+
+          var attempts = 0;
+          var MAX_ATTEMPTS = 20; // ~2.5s of retries at 125ms apart, then give up
+          var RETRY_DELAY_MS = 1;
+          var timeoutId = null;
+
+          function isOpen() {
+            return container.children.length > 1;
+          }
+
+          var observer = new MutationObserver(function () {
+            if (isOpen()) stop();
+          });
+          observer.observe(container, { childList: true });
+
+          function stop() {
+            clearTimeout(timeoutId);
+            observer.disconnect();
+          }
+
+          function tryClick() {
+            if (isOpen()) {
+              stop();
+              return;
+            }
+            attempts++;
+            trigger.click();
+            if (isOpen()) {
+              stop();
+              return;
+            }
+            if (attempts >= MAX_ATTEMPTS) {
+              stop();
+              console.warn(
+                "[buynow-widget] Gave up auto-opening the widget after " + attempts + " attempts."
+              );
+              return;
+            }
+            timeoutId = setTimeout(tryClick, RETRY_DELAY_MS);
+          }
+
+          var userOnOpen = config.onOpen;
+          config.onOpen = function (data) {
+            stop();
+            if (userOnOpen) userOnOpen(data);
+          };
+
+          timeoutId = setTimeout(tryClick, 0);
+        }
+
+        function renderWidget() {
+          var config = applyFullOverride(applySimpleOverrides(Object.assign({}, defaultConfig)));
+          wireEventForwarding(config);
+          autoOpenOnReady(config);
+
+          var widget = new BuyNowWidget(config);
+          widget.render("#" + CONTAINER_ID);
+
+          if (typeof ResizeObserver !== "undefined") {
+            new ResizeObserver(notifyResize).observe(document.body);
+          }
+          window.addEventListener("load", notifyResize);
+          notifyResize();
+        }
+
+        // Render as soon as the DOM is ready - the widget script tag above is blocking, so
+        // BuyNowWidget already exists by the time this runs.
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", renderWidget);
+        } else {
+          renderWidget();
+        }
+      })();
+    </script>
+  </body>
+</html>
